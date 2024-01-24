@@ -1,0 +1,29 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Create a 5-by-10 matrix of random integers.
+
+```{r}
+countData <- matrix(sample.int(1000, size = 50, replace = TRUE), nrow = 5, ncol = 10)
+countData
+```
+
+Define column names and row names.
+
+```{r}
+colnames(countData) <- c(paste("cond", 1:5, sep = ""), paste("ctrl", 1:5, sep = ""))
+rownames(countData) <- paste("gene", 1:5, sep = "")
+countData
+```
+
+Compute the fold change for each gene.
+
+```{r}
+colData <- data.frame(condition = c(rep("cond", 5), rep("ctrl", 5)), stringsAsFactors = TRUE)
+dds <- DESeq2::DESeqDataSetFromMatrix(countData, colData, ~ condition)
+dds <- DESeq2::DESeq(dds)
+res <- DESeq2::results(dds)
+setNames(2^res$log2FoldChange, paste("gene", 1:5, sep = ""))
+```
