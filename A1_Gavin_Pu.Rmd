@@ -1,0 +1,342 @@
+---
+title: "BCB420H1 Assignment 1"
+author: "Gavin Pu"
+date: "2024-02-13"
+bibliography: A1_Gavin_Pu.bib
+output:
+  html_notebook:
+    toc: true
+    toc_depth: 2
+---
+
+# Introduction
+
+This dataset was collected for a publication on the ability of monocytes to gain trained immunity after exposure to inactivated SARS-CoV-2 (iSARS-CoV-2). The authors began by culturing monocytes and introducing iSARS-CoV-2 into some of the samples. After 6 days, the authors added lipopolysaccharide (LPS) to some samples exposed to iSARS-CoV-2 and some samples left unexposed in the growth medium. LPS is a molecule associated with pathogens that has been found previously to induce a stronger response in cells from patients with COVID-19 compared to those from healthy patients. To determine the strength of the trained immune response, the authors measured the densities of cytokines and chemokines in the monocytes [@cvetkovic2023].
+
+The figure below is adapted from Figure 2 of the authors' publication. This figure shows the secretion levels of certain cytokines and chemokines of monocytes grouped by whether they were exposed (trained) or not exposed (untrained) to iSARS-CoV-2 and whether they were exposed to LPS on day 6 [@cvetkovic2023].
+
+![](https://karger.silverchair-cdn.com/karger/content_public/journal/jin/15/1/10.1159_000535120/2/000535120_f02.jpeg?Expires=1710841754&Signature=shN199MXB2OWsA9gG2pW0GFh5-L9jJgEAbISg6s3exosowJg6Z4AEpmUIwJWdnAYmXJqKXJnQNKY-C0VEvwc2dtTXPCD65GViUY0lTDoCT8T5Ksc-Qr7rHw6eUS6cIGCXOwC-A82ZFmQlsRbjwi5zFHmB-IoVhpt9taiNmm8oWD~BJAqL54y42ZA~ACjo6yO8SkUxCLMQKO5jU8VEnZPAF0fvmyWKtYazkzNwTaMctqWoe9sDVF3VcH6Q2bS1AlVaUQg-MniLyL-kjPNBoAyTI62VU9XnJKaoFmvMMRVhUVKhjggHx7MkXDFPO7QbjZVV2abNOmOD5tw5CeXa1tEIQ__&Key-Pair-Id=APKAIE5G5CRDK6RD3PGA)
+
+**Why is the dataset of interest to you?** I wanted to analyze a dataset related to COVID-19 for this assignment due to COVID-19's impact on my life, if not on everyone's lives. I used GEO to find RNA-seq datasets related to COVID-19 that were published recently and came across this dataset, which had a straightforward raw counts matrix and well-defined test and control conditions. Hence, I selected this dataset out of all datasets on COVID-19 for its clarity and ease of use.
+
+**What are the control and test conditions of the dataset?** This dataset has two test and two control conditions. Monocytes under both test conditions were exposed to iSARS-CoV-2 (referred to by the authors as trained monocytes), while monocytes under both control conditions were kept in medium without exposure (referred to by the authors as untrained monocytes). Some monocytes were also exposed to LPS 6 days after beginning culture. The two test conditions are monocytes exposed to iSARS-CoV-2 only (Trn_S-Med) and monocytes exposed to iSARS-CoV-2 and LPS (Trn_S-LPS). The two control conditions are monocytes without any exposure (Unt-Med) and monocytese exposed to LPS only (Unt-LPS) [@cvetkovic2023].
+
+# Data Cleaning and Mapping to HGNC Symbols
+
+## Data Download
+
+The dataset has GEO accession GSE235094. We begin by finding the filename of the only supplementary file, which contains raw counts data using GEOquery [@GEOquery].
+
+```{r, results='hide', error=FALSE, message=FALSE, warning=FALSE}
+# GEO accession of the data
+data_set_geoid <- "GSE235094"
+
+# Get the filename of the supplementary file with raw counts
+sfilenames <- GEOquery::getGEOSuppFiles(data_set_geoid, fetch_files = FALSE)
+data_filename <- sfilenames$fname
+```
+
+If the supplementary file is not already downloaded, the code chunk below downloads it.
+
+```{r}
+# Path for storing downloaded files
+download_dir <- file.path(getwd())
+
+# Check to see which supplementary files are not already downloaded
+missing_files <- sfilenames$fname[!sapply(
+  sfilenames$fname, function(x) {
+    file.exists(file.path(download_dir, data_set_geoid, x))
+  })]
+
+# Download files that were not downloaded before
+if (length(missing_files) > 0) {
+  for (i in 1:length(missing_files)) {
+    GEOquery::getGEOSuppFiles(data_set_geoid, baseDir = download_dir,
+                              fetch_files = TRUE,
+                              filter_regex = missing_files[i])
+  }
+}
+```
+
+An odd feature of the raw counts file is that it uses both periods and commas to denote decimal points in numbers. To recognize both symbols as decimal points, we first read the file into R using commas to denote decimals. Next, the numbers using periods as decimals can be directly converted from a string into a numeric type.
+
+```{r}
+# Read in the data
+data <- read.table(file.path(download_dir, data_set_geoid, data_filename),
+                   header = TRUE, dec = ",", row.names = 1)
+data <- data.frame(sapply(data, as.numeric), row.names = rownames(data))
+```
+
+## Assessment
+
+As a basic check for data quality, we compute summary statistics for each sample in the data. These summary statistics include the five-number summary (minimum, first quartile, median, third quartile, and maximum) and the mean. The table displayed below is created using knitr [@knitr].
+
+```{r}
+# Table of overview statistics
+overview_stats <- data.frame(min = sapply(data, min),
+                             Q1 = sapply(data, quantile, probs = 0.25),
+                             median = sapply(data, median),
+                             mean = sapply(data, mean),
+                             Q3 = sapply(data, quantile, probs = 0.75),
+                             max = sapply(data, max))
+knitr::kable(overview_stats,
+             col.names = c("Sample", "Minimum", "First Quartile", "Median",
+                           "Mean", "Third Quartile", "Maximum"))
+```
+
+**Were there any outliers in your dataset? How were they handled in the originating paper? How many outliers were removed? (Part 1 of 2)** The statistics seem to behave similariy across different samples, but three samples stand out from the rest immediately. Sample2, Sample8, and Sample16 each have a mean and maximum that seems significantly less than the means and maxima of other samples. In addition, the third quartiles of Sample2 and Sample16 are 0, indicating that at least three-fourths of the genes for these samples have a count of 0. For Sample8, the median is 0 and and the third quartile is 1, indicating that least one half of the genes for Sample8 have a count of 0, and at least three-fourths of the genes for Sample8 have a count of 1. These three samples may have been due to measurement errors, but they are most likely outliers that we will discard later. The original paper does not discuss how they handled outliers in their methods.
+
+## Mapping
+
+The genes in the raw data are represented Ensembl gene IDs with a version number on the end. We remove the version numbers since they are not needed to map Ensembl gene IDs to HGNC symbols.
+
+```{r}
+# Remove version information from Ensembl gene IDs
+rownames(data) <- sapply(rownames(data), function(x) {
+  unlist(strsplit(x, "\\."))[1]
+})
+```
+
+We use biomaRt to get the Ensembl gene IDs and HGNC symbols for genes in our data [@biomaRt].
+
+```{r, results='hide', error=FALSE, message=FALSE, warning=FALSE}
+# Use the human gene dataset from Ensembl
+ensembl <- biomaRt::useMart("ensembl")
+ensembl <- biomaRt::useDataset("hsapiens_gene_ensembl", mart = ensembl)
+
+# Get Ensembl gene IDs and HGNC symbols of genes in the data
+gene_id <- biomaRt::getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
+                          filters = "ensembl_gene_id", values = rownames(data),
+                          mart = ensembl)
+```
+
+**Were there expression values that could not be mapped to current HUGO symbols?** Yes, for two reasons. First, some expression values have invalid Ensembl gene IDs, which usually happens due to the Ensembl gene ID being retired. Second, some expression values do have valid Ensembl gene IDs, but there is no corresponding HGNC symbol. The code below determine how many expression values could not be happed to HGNC symbols.
+
+```{r}
+# Number of genes without a valid Ensembl gene ID
+sum(!(rownames(data) %in% gene_id$ensembl_gene_id))
+
+# Number of genes with a valid Ensembl gene ID but no HGNC symbol
+sum(gene_id$hgnc_symbol == "")
+```
+
+We see that 147 genes have invalid Ensembl gene IDs and 5327 have valid Ensembl gene IDs but no corresponding HGNC symbol. In total, there are 5474 genes that cannot be mapped to a HGNC symbol. There are 35606 genes in total, so approximately 15% of the genes cannot be mapped. However, since this constitutes a sizeable amount of genes, we will not discard genes with no HGNC symbol. Instead, we will keep all genes and use HGNC symbols for the row names where possible. Genes without an HGNC symbol will keep their Ensembl gene ID as the row name. **This deviates slightly from the specification where all rows much have HGNC symbols.**
+
+To simplify the table mapping Ensembl gene IDs to their corresponding HGNC symbols, we will remove rows where the HGNC symbol is blank.
+
+```{r}
+# Get rid of rows with blank HGNC symbols
+gene_id <- gene_id[gene_id$hgnc_symbol != "", ]
+```
+
+We will now scan the table for any genes with duplicate HGNC symbols.
+
+```{r}
+# Find duplicate HGNC symbols
+hgnc_duplicate <- gene_id$hgnc_symbol[duplicated(gene_id$hgnc_symbol)]
+print(hgnc_duplicate)
+```
+
+**Were there expression values that were not unique for specific genes? How did you handle these?** As we can see, there are 4 HGNC symbols that appear more than once. Since R does not allow row names to be the exact same, we will instead use the Ensembl gene IDs for any gene with an HGNC symbol that appears more than once. **Again, this deviates slightly from the specification where all rows much have HGNC symbols.**
+
+Finally, we replace Ensembl gene IDs in the data with HGNC symbols wherever possible.
+
+```{r}
+# Merge HGNC symbols into the data
+data <- merge(gene_id, data, by.x = "ensembl_gene_id",
+              by.y = "row.names", all.y = TRUE)
+
+# Use HGNC symbols as row names
+rownames(data) <- ifelse(!(data$hgnc_symbol %in% hgnc_duplicate) & 
+                           !is.na(data$hgnc_symbol),
+                         data$hgnc_symbol, data$ensembl_gene_id)
+data <- data[!(colnames(data) %in% c("ensembl_gene_id", "hgnc_symbol"))]
+```
+
+## Cleaning
+
+Before cleaning the data, we need information on which group (condition) each sample belongs to.
+
+```{r, results='hide', error=FALSE, message=FALSE, warning=FALSE}
+# Information on all samples in the data
+gse <- GEOquery::getGEO(data_set_geoid, GSEMatrix = FALSE)
+list_of_samples <- gse@gsms
+
+# Get information on which group each sample belongs to
+samples_type <- data.frame(do.call(rbind, lapply(list_of_samples, function(x) {
+  c(x@header$title, x@header$description)
+})))
+rownames(samples_type) <- sapply(list_of_samples, function(x) {
+  x@header$geo_accession
+})
+colnames(samples_type) <- c("title", "description")
+
+# Fix a typo for Sample8 (GSM7494957)
+samples_type$title <- gsub("Trn-S-Med", "Trn_S-Med",
+                           samples_type$title)
+```
+
+The table below was created with knitr and shows the group of each sample [@knitr].
+
+```{r}
+# Table of sample and group information
+knitr::kable(samples_type,
+             col.names = c("GEO Accession", "Sample with Group",
+                           "Sample"))
+```
+
+**How many samples are in each of the conditions of your dataset?** Recall from the introduction that the four conditions in the dataset are Unt-Med, Unt-LPS, Trn_S-Med, and Trn_S-LPS. There are 5 samples in Unt-Med, 5 samples in Unt-LPS, 7 samples in Trn_S-Med, and 5 samples in Trn_S-LPS.
+
+Unfortunately, Sample5 is not included in any group and has no associated information on GEO. We cannot use a sample in future analysis if we do not know the group that it belongs to, so we will remove it from the data.
+
+```{r}
+# Remove Sample5 from the data
+data <- data[colnames(data) != "Sample5"]
+```
+
+**Were there any outliers in your dataset? How were they handled in the originating paper? How many outliers were removed? (Part 2 of 2)** Recall from when we were assessing our data using summary statistics that we found three samples that were outliers, namely Sample2, Sample8, and Sample16. Here we remove these three samples from the data.
+
+```{r}
+# Remove outlier samples from the data
+data <- data[!(colnames(data) %in% c("Sample2", "Sample8", "Sample16"))]
+```
+
+**How did you handle replicates?** As discussed previously while cleaning the data, we removed replicates that had no associated information on which group they belonged to and replicates that were outliers, perhaps due to measurement errors. All other replicates were kept.
+
+In the code chunk below, we replace the original column names containing information on only the sample with column names with both sample and group information.
+
+```{r}
+# Use more descriptive column names to show the group of each sample
+colnames(data)[colnames(data) %in% samples_type$description] <- sapply(
+  colnames(data)[colnames(data) %in% samples_type$description], function(x) {
+  samples_type$title[samples_type$description == x]
+})
+```
+
+The groups themselves can be obtained with the help of a regular expression to remove the sample information at the end.
+
+```{r}
+# Get groups of samples
+group <- gsub("_S[0-9]+", "", colnames(data))
+```
+
+# Normalization
+
+During the process of normalizing our data, we will create multiple density plots. The function `density_plot` shows the routine we will follow when creating a density plot of counts data.
+
+```{r}
+# Function for creating a density plot of counts data
+density_plot <- function(counts, main, ylab) {
+  
+  # Kernel density estimate of log2-counts
+  counts_density <- apply(log2(counts), 2, density)
+  
+  # x and y limits of the plot
+  xlim <- 0
+  ylim <- 0
+  for (i in 1:length(counts_density)) {
+    xlim <- range(c(xlim, counts_density[[i]]$x))
+    ylim <- range(c(ylim, counts_density[[i]]$y))
+  }
+  
+  # Initialize the plot using the first density
+  plot(counts_density[[1]], type = "n", xlim = xlim, ylim = ylim, main = main,
+       ylab = ylab)
+  
+  # Vector of colors used for the plot
+  col = rainbow(length(counts_density))
+  
+  # Plot each density
+  for (i in 1:length(counts_density)) {
+    lines(counts_density[[i]], col = col[i], lty = 1)
+  }
+  
+  # Add a legend
+  legend("topleft", colnames(counts), col = col, lty = 1)
+}
+```
+
+Below is a density plot of the original unnormalized raw counts.
+
+```{r, fig.height=6.5}
+# Density plot of original data
+data_matrix <- as.matrix(data)
+density_plot(data_matrix, main = "Density Plot of Raw Counts",
+             ylab = "Smoothing Density of log2-Counts")
+```
+
+We filter out genes with low counts and obtain another density plot.
+
+```{r, fig.height=6.5}
+# Minimum number of samples required
+n_samples_min <- 15
+
+# Filter out genes with low counts
+keep <- rowSums(edgeR::cpm(data_matrix) > 1) >= n_samples_min
+data_matrix <- data_matrix[keep, ]
+
+# Density plot of filtered data
+density_plot(data_matrix, main = "Density Plot of Filtered Counts",
+             ylab = "Smoothing Density of log2-Counts")
+```
+
+This density plot clearly indicates that most (if not all) genes with low counts have been successfully removed.
+
+Next, to normalize the counts, we use TMM, which is implemented in edgeR [@edgeR].
+
+```{r, fig.height=6.5}
+# Use TMM to normalize counts
+data_dge <- edgeR::DGEList(counts = data_matrix, group = group)
+norm_factors <- edgeR::calcNormFactors(data_dge)
+norm_counts <- edgeR::cpm(norm_factors)
+
+# Density plot of normalized data
+density_plot(norm_counts, main = "Density Plot of Normalized Counts",
+             ylab = "Smoothing Density of log2-CPM")
+```
+
+The density plot of normalized counts has a "tighter" overall shape than the density plot of filtered, unnormalized counts, which is what we expect.
+
+We can create a multidimensional scaling (MDS) plot to check sample separation using limma [@limma].
+
+```{r, fig.height=5, fig.width=5}
+# Create a multidimensional scaling plot after normalization
+limma::plotMDS(norm_factors, pch = 16,
+               main = "MDS Plot of Scaling Factors",
+               col = rainbow(length(unique(group)))[factor(group)])
+legend("right", levels(factor(group)),
+       col = rainbow(length(unique(group))), pch = 16, title = "Group")
+```
+
+There is a clear division of 4 out of the 5 Trn_S-LPS samples from the rest of the samples. The samples in Trn_S-Med are in the same cluster, but there are samples from other groups (1 from Trn_S-LPS and 2 from Unt-Med) that are also in the cluster of Trn_S-Med samples. The Unt-LPS samples do not form a tight cluster but appear to be located in the same wide area. This also seems to be the case with the Unt-Med samples, although as stated previously, 2 samples from Unt-Med also look like they are part of another smaller cluster.
+
+**What is the final coverage of your dataset?** To answer this question, we need the dimensions of the matrix containing normalized counts.
+
+```{r}
+# Dimensions of normalized counts matrix
+dim(norm_counts)
+```
+
+There are 11390 genes across 19 samples. In the original raw data, there were 35606 genes across 23 samples. The final coverage is $\frac{11390 \times 19}{35606 \times 23} \approx 0.264$, or approximately 26.4% of the original data.
+
+Finally, we can save the normalized counts matrix to a file.
+
+```{r}
+# Save normalized counts in a text file
+write.table(norm_counts, "norm_counts.txt", quote = FALSE)
+```
+
+# Question Index
+
+This section contains a list of all questions and the corresponding sections of the assignment that their answers can be found in.
+
+* **Why is the dataset of interest to you?** - [Introduction](#introduction)
+* **What are the control and test conditions of the dataset?** - [Introduction](#introduction)
+* **How many samples are in each of the conditions of your dataset?** - [Cleaning](#cleaning)
+* **Were there expression values that were not unique for specific genes? How did you handle these?** - [Mapping](#mapping)
+* **Were there expression values that could not be mapped to current HUGO symbols?** - [Mapping](#mapping)
+* **Were there any outliers in your dataset? How were they handled in the originating paper? How many outliers were removed?** - [Assessment](#assessment) (Part 1 of 2) and [Cleaning](#cleaning) (Part 2 of 2)
+* **How did you handle replicates?** - [Cleaning](#cleaning)
+* **What is the final coverage of your dataset?** - [Normalization](#normalization)
+
+# References
