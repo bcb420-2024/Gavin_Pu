@@ -1,0 +1,420 @@
+---
+title: "BCB420H1 Assignment 2"
+author: "Gavin Pu"
+date: "2024-03-12"
+bibliography: A2_Gavin_Pu.bib
+output:
+  html_notebook:
+    fig_caption: true
+    toc: true
+    toc_depth: 2
+---
+
+# Introduction
+
+The RNA-seq data were collected from an experiment investigating whether human monocytes could acquire trained immunity after exposure to SARS-CoV-2. The monocyte samples used in the study were cultured over a period of 7 days before the authors measured the densities of cytokines and chemokines present in the samples. Before beginning culture, the authors exposed some monocytes to inactivated SARS-CoV-2 (iSARS-CoV-2) while leaving the rest unexposed. After 6 days of culture, the authors introduced lipopolysaccharide (LPS) to some samples that were previously exposed to iSARS-CoV-2 and some samples that were not exposed. LPS is a molecular pattern associated with numerous pathogens that has been found to elicit stronger responses in monocytes from patients with COVID-19 compared to monocytes from healthy patients [@cvetkovic2023].
+
+Importantly, the monocytes used in the experiment were divided into four groups, two of which were test conditions and two of which were controls. Under test conditions, the monocytes were exposed to iSARS-CoV-2 and referred to as trained monocytes by the authors. Under control conditions, the monocytes had no exposed to iSARS-CoV-2 and were referred to as untrained monocytes by the authors. The exposure to LPS 6 days after starting culture separated samples into four groups depending on whether they were exposed to iSARS-CoV-2 and LPS. The two test conditions were monocytes exposed to both iSARS-CoV-2 and LPS (Trn_S-LPS) and monocytes exposed to iSARS-CoV-2 but not LPS (Trn_S-Med). The two control conditions were monocytes exposed to only LPS (Unt-LPS) and monocytes without exposure to either iSARS-CoV-2 or LPS (Unt-Med) [@cvetkovic2023].
+
+The figure below is adapted from Figure 2 of the authors' publication. This figure shows the secretion levels of certain cytokines and chemokines of monocytes grouped by whether they were exposed (trained) or not exposed (untrained) to iSARS-CoV-2 and whether they were exposed to LPS on day 6 [@cvetkovic2023].
+
+![](https://karger.silverchair-cdn.com/karger/content_public/journal/jin/15/1/10.1159_000535120/2/000535120_f02.jpeg?Expires=1710841754&Signature=shN199MXB2OWsA9gG2pW0GFh5-L9jJgEAbISg6s3exosowJg6Z4AEpmUIwJWdnAYmXJqKXJnQNKY-C0VEvwc2dtTXPCD65GViUY0lTDoCT8T5Ksc-Qr7rHw6eUS6cIGCXOwC-A82ZFmQlsRbjwi5zFHmB-IoVhpt9taiNmm8oWD~BJAqL54y42ZA~ACjo6yO8SkUxCLMQKO5jU8VEnZPAF0fvmyWKtYazkzNwTaMctqWoe9sDVF3VcH6Q2bS1AlVaUQg-MniLyL-kjPNBoAyTI62VU9XnJKaoFmvMMRVhUVKhjggHx7MkXDFPO7QbjZVV2abNOmOD5tw5CeXa1tEIQ__&Key-Pair-Id=APKAIE5G5CRDK6RD3PGA)
+
+The data are available on GEO with GEO accession [GSE235094](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE235094). After cleaning the data and removing outlier samples, we found that there were 4 samples in Unt-LPS and 5 samples in each of the three other groups (Unt-Med, Trn_S-Med, and Trn_S-LPS). There were 11,390 genes remaining in the expression matrix after filtering out genes with low counts. Hence, the expression matrix has 11,390 genes (rows) across 19 total samples (columns).
+
+# Data Setup
+
+First, we will use knitr to rerun code from Assignment 1 via a temporary R file to obtain the filtered, unnormalized counts [@knitr].
+
+```{r, fig.show='hide', results='hide', error=FALSE, message=FALSE, warning=FALSE}
+# Save Assignment 1 code into a temporary R file and run it
+knitr::purl("A1_Gavin_Pu.Rmd", "A1_Gavin_Pu.R")
+source("A1_Gavin_Pu.R")
+```
+
+The unnormalized counts are stored in a variable named `data_dge`. The other variables as well as the temporary R file can all be removed.
+
+```{r}
+# Remove objects that are not the unnormalized counts
+rm(list = ls()[ls() != "data_dge"])
+
+# Delete the temporary R file
+unlink("A1_Gavin_Pu.R")
+```
+
+Next, we can import the normalized counts saved to a file at the end of Assignment 1.
+
+```{r}
+# Load normalized counts
+norm_counts <- read.table("norm_counts.txt", header = TRUE, row.names = 1,
+                          check.names = FALSE)
+```
+
+# Differential Gene Expression
+
+Using a regular expression, we can extract the group of each sample from the column names of the normalized counts data frame.
+
+```{r}
+# Get the group of each sample
+group <- gsub("_S[0-9]+$", "", colnames(norm_counts))
+```
+
+The package edgeR creates a pipeline for finding differentially expressed genes. We begin by using edgeR to estimate the dispersion using the groups and unnormalized counts [@edgeR].
+
+```{r}
+# Encode Trn_S-LPS within the contrast matrix
+group <- factor(group)
+rownames(contrasts(group)) <- c("Unt-Med", "Unt-LPS", "Trn_S-Med",
+                                       "Trn_S-LPS")
+colnames(contrasts(group)) <- c("Unt-LPS", "Trn_S-Med", "Trn_S-LPS")
+
+# Create a design matrix using groups
+design_matrix <- model.matrix(~ group)
+
+# Estimate the dispersion
+dispersion <- edgeR::estimateDisp(data_dge, design_matrix)
+```
+
+The biological coefficient of variation (BCV) is equal to the square of the dispersion. A graph of the BCV can be used as a visual diagonstic of how well a quasi-likelihood negative binomial generalized log-linear model fits our count data [@edgeR].
+
+```{r, fig.height=5, fig.width=5, fig.cap='**Figure 1**: Plot of biological coefficient of variation (BCV) against log2 counts per million (CPM).'}
+# Plot the BCV
+edgeR::plotBCV(dispersion, main = "BCV Plot")
+```
+
+This graph indicates that the BCV trend matches the common BCV quite well. Most genes have a tagwise BCV situated near the common BCV, though there are some genes with a BCV greater than 1 while the common BCV is close to 0.5. Additionally, we can plot the mean-variance relationship of our data against a negative binomial mean-variance relationship to assess how well the model used by edgeR will fit our data [@edgeR].
+
+```{r, fig.height=5, fig.width=7.5, fig.cap='**Figure 2**: Plot of the mean-variance relationship of the gene expression data.'}
+# Plot the mean-variance relationship with a legend
+edgeR::plotMeanVar(dispersion, show.raw.vars = TRUE, show.tagwise.vars = TRUE,
+                   show.binned.common.disp.vars = TRUE, NBline = TRUE,
+                   main = "Mean-Variance Relationship")
+legend("topleft",
+       c("Poisson Mean-Variance Relationship", "Raw Variances",
+         "Tagwise Variances", "Average Raw Variances",
+         "Binned Common Dispersion Variances", "NB Mean-Variance Relationship"),
+       col = c("black", "gray60", "lightskyblue", "darkred", "firebrick2",
+               "dodgerblue3"),
+       lty = c(1, 0, 0, 0, 0, 1),
+       lwd = c(2, 1, 1, 1, 1, 4),
+       pch = c(NA, 'o', 'o', "x", "x", NA),
+       cex = 0.75,
+       pt.cex = c(1, 0.6, 0.6, 1.5, 1.5, 1))
+```
+
+The variances in the graph of the mean-variance relationship all fall around the mean-variance relationship of a negative binomial model, indicating again that a quasi-likelihood negative binomial generalized log-linear model will likely be a good fit for our data. We can use edgeR to fit the model as done in the following code chunk [@edgeR].
+
+```{r}
+# Fit a quasi-likelihood negative binomial GLM using the dispersion
+model_glmQL <- edgeR::glmQLFit(dispersion, design_matrix)
+```
+
+Before testing for differential expression, we will refer to a multidimensional scaling (MDS) plot to determine which group or groups to test. The scaling factors can be calculated with edgeR, and the MDS plot can be created with limma [@edgeR; @limma].
+
+```{r, fig.height=5, fig.width=5, fig.cap='**Figure 3**: MDS plot of scaling factors.'}
+# Calculate scaling factors
+norm_factors <- edgeR::calcNormFactors(data_dge)
+
+# Create a multidimensional scaling plot
+limma::plotMDS(norm_factors, pch = 16,
+               main = "MDS Plot of Scaling Factors",
+               col = rainbow(length(unique(group)))[factor(group)])
+legend("right", levels(factor(group)),
+       col = rainbow(length(unique(group))), pch = 16, title = "Group")
+```
+
+As shown in the MDS plot, although the four groups are not divided from each other completely, 4 out of the 5 Trn_S-LPS samples show a clear clustering and division from the rest of the samples. The last sample in Trn_S-LPS appears to form another cluster with all 5 samples from Trn_S-Med and 2 out of the 5 samples from Unt-Med. Recall that Trn_S-LPS was the group of monocyte samples that received both exposures (iSARS-CoV-2 and LPS). Hence, Trn_S-LPS may also be the most informative group out of the four in the study to perform differential expression tests on. Below we use edgeR to test for differential expression in Trn_S-LPS [@edgeR].
+
+```{r}
+# Perform quasi-likelihood tests for differential expression
+test_glmQL <- edgeR::glmQLFTest(model_glmQL, coef = "groupTrn_S-LPS")
+results_glmQL <- edgeR::topTags(test_glmQL, n = nrow(norm_counts))$table
+```
+
+Using knitr, we present a table of the 10 genes with the lowest p-values from the differential expression tests [@knitr].
+
+```{r}
+# Table of the top 10 genes with the lowest p-values
+knitr::kable(results_glmQL[1:10, ], type = "html", row.names = TRUE,
+             caption = "**Table 1**: Top 10 genes with lowest p-values.")
+```
+
+**1. Calculate p-values for each of the genes in your expression set. How many genes were significantly differentially expressed? What thresholds did you use and why?** We will use a threshold of 0.05. This threshold does not have any special meaning, but it has become a convention when performing statistical tests. The following code chunk calculates the number of genes that were significantly differentially expressed.
+
+```{r}
+# Number of genes with p-value less than 0.05
+length(which(results_glmQL$PValue < 0.05))
+```
+
+We find that 4,987 genes are significantly differentially expressed.
+
+**2. Correct your p-values using a multiple hypothesis correction method. Which method did you use and why? How many genes passed correction?** We used the Benjamini--Hochberg correction method to control for false discovery rate (FDR). This method is commonly used when performing differential expression tests and does not correct p-values as stringently as the Bonferroni correction. Again, we will use a threshold of 0.05 for the corrected p-values due to 0.05 being conventionally used for hypothesis testing. Below, we calculate the number of genes that passed multiple hypothesis correction.
+
+```{r}
+# Number of genes with p-values less than 0.05 after FDR correction
+length(which(results_glmQL$FDR < 0.05))
+```
+
+There are 3,594 genes that are significantly differentially expressed in the group Trn_S-LPS after multiple hypothesis correction. It is better to use genes with significant differential expression after correcting for multiple hypotheses, so the rest of our analyses will focus on these 3,594 genes found to pass correction.
+
+**3. Show the amount of differentially expressed genes using an MA Plot or a Volcano plot. Highlight genes of interest.** We present a volcano plot below that highlights the differential expression status of each gene. Each point in the volcano plot represents a gene. Points in red indicate genes that are significantly upregulated, points in blue indicate genes that are significantly downregulated, and points in black indicate genes that did not exhibit significant differental expression.
+
+```{r, fig.height=5, fig.width=7.5, fig.cap='**Figure 4**: Volcano plot of differential expression statuses of each gene.'}
+# Assign colors to each gene
+colors_volcano <- ifelse(results_glmQL$FDR < 0.05,
+                         ifelse(results_glmQL$logFC > 0, "red", "blue"),
+                         "black")
+
+# Create a volcano plot
+plot(results_glmQL$logFC, -1 * log10(results_glmQL$FDR),
+     main = "Volcano Plot", xlab = "log2 Fold Change", ylab = "-log10 P-Value",
+     col = colors_volcano)
+legend("bottomleft", c("Upregulated", "Downregulated", "Not Significant"),
+       col = c("red", "blue", "black"), pch = c(1, 1, 1))
+```
+
+The next code chunk finds the name of each gene showing significant differential expression in Trn_S-LPS.
+
+```{r}
+# Get the genes with corrected p-values less than 0.05
+top_genes <- rownames(results_glmQL)[results_glmQL$FDR < 0.05]
+```
+
+**4. Visualize your top hits using a heatmap. Do you conditions cluster together? Explain why or why not.** We use the packages circlize and ComplexHeatmap to create a row-normalized heatmap that also indicates the group of each sample. Each row represents a gene with significant differential expression in Trn_S-LPS, and each column represents a unique sample [@circlize; @ComplexHeatmap].
+
+```{r, fig.height=10, fig.width=7, fig.cap='**Figure 5**: Heatmap of row-normalized counts of significantly differentially expressed genes.'}
+# Create a scaled matrix to use for the heatmap
+heatmap_matrix <- t(scale(t(as.matrix(norm_counts))))[rownames(norm_counts) %in%
+                                                      top_genes, ]
+
+# Set heatmap colors
+if (min(heatmap_matrix) < 0) {
+  colors_heatmap <- circlize::colorRamp2(
+    c(min(heatmap_matrix), 0, max(heatmap_matrix)), c("blue", "white", "red"))
+} else {
+  colors_heatmap <- circlize::colorRamp2(
+    c(0, max(heatmap_matrix)), c("white", "red"))
+}
+
+# Set annotation colors
+colors_annotation <- rainbow(length(unique(group)))
+names(colors_annotation) <- unique(group)
+
+# Create annotations
+annotation <- ComplexHeatmap::HeatmapAnnotation(
+  df = data.frame(group = group), col = list(group = colors_annotation))
+
+# Create a heatmap
+ComplexHeatmap::Heatmap(heatmap_matrix, colors_heatmap,
+                        column_title = "Top Hits for Trn_S-LPS",
+                        show_row_names = FALSE, top_annotation = annotation)
+```
+
+The clustering shown in the heatmap matches the clustering shown in the earlier MDS plot. Notice that 4 out of the 5 samples from Trn_S-LPS (samples 11, 17, 15, and 27) are extremely similar and form a visible cluster in the heatmap. However, the remaining sample from Trn_S-LPS (sample 4) does not cluster with the rest of them and is instead more similar to certain samples from Trn_S-Med and Unt-Med. This is a clear reflection of what was presented in the MDS plot, as the MDS plot also showed 4 out of the 5 samples from Trn_S-LPS clustering together, while the remaining sample was in a different cluster that also included samples from Trn_S-Med and Unt-Med.
+
+# Thresholded Over-Representation Analysis
+
+**1. Which method did you choose and why?** We choose thresholded over-representation analysis because this method is easy to apply and considers the genes with the most significant differential expression (i.e., the strongest signals), which is a great place to start. The threshold we are using is a p-value less than 0.05 after multiple hypothesis correction because the 0.05 significance threshold is widely used, and we can be more certain that there are less false positives in the genes we found to be significantly differentially expressed after multiple hypothesis correction.
+
+We will use g:Profiler to perform thresholded over-representation analysis. Below are the parameters we will use in g:Profiler. Specifically, we want to compare our genes against human gene sets, the minimum and maximum sizes of the genes sets we will consider are 5 and 1,000 respectively, and there must be at least 5 of our genes in each gene set returned.
+
+```{r}
+# Parameters for g:Profiler
+organism <- "hsapiens"
+max_gene_set_size <- 1000
+min_gene_set_size <- 5
+min_intersection <- 5
+```
+
+Before performing thresholded over-representation analysis, we need to get lists of significantly upregulated and downregulated genes. We can find significant genes by comparing their corrected p-values against 0.05, and we can determine whether genes are upregulated or downregulated using the signs of their log2 fold changes.
+
+```{r}
+# Find upregulated genes
+upregulated_genes <- rownames(results_glmQL[which(
+  results_glmQL$FDR < 0.05 & results_glmQL$logFC > 0), ])
+
+# Find downregulated genes
+downregulated_genes <- rownames(results_glmQL[which(
+  results_glmQL$FDR < 0.05 & results_glmQL$logFC < 0), ])
+```
+
+**2. What annotation data did you use and why? What version of the annotation data are you using?** We will be using GO biological process, Reactome, and WikiPathways because these three annotation data sources all contain annotations concerning bioligical pathways and processes that gene products are involved in. Using gprofiler2, an R interface for g:Profiler, we can find version information on these data sources [@gprofiler2].
+
+```{r}
+# Get version information on g:Profiler data sources
+gprofiler_version_info <- gprofiler2::get_version_info(organism = organism)
+print(gprofiler_version_info$gprofiler_version)
+```
+
+The version of the annotation data we are using is e111_eg58_p18_30541362.
+
+Using gprofiler2, we run thresholded over-representation analysis on the upregulated and downregulated genes separately. For comparison, we also run thresholded over-representation analysis on all differentially expressed genes, regardless of whether they are upregulated or downregulated [@gprofiler2].
+
+```{r}
+# Run g:Profiler on the upregulated genes
+gprofiler_upregulated <- gprofiler2::gost(
+  upregulated_genes, organism = organism, exclude_iea = TRUE,
+  correction_method = "fdr", sources = c("GO:BP", "REAC", "WP"))
+
+# Run g:Profiler on the downregulated genes
+gprofiler_downregulated <- gprofiler2::gost(
+  downregulated_genes, organism = organism, exclude_iea = TRUE,
+  correction_method = "fdr", sources = c("GO:BP", "REAC", "WP"))
+
+# Run g:Profiler on all differentially expressed genes
+gprofiler_all <- gprofiler2::gost(
+  c(upregulated_genes, downregulated_genes), organism = organism,
+  exclude_iea = TRUE, correction_method = "fdr",
+  sources = c("GO:BP", "REAC", "WP"))
+```
+
+GSA allows us to download the gene set definitions used by g:Profiler [@GSA].
+
+```{r, results='hide', error=FALSE, message=FALSE, warning=FALSE}
+# Path to local file
+gprofiler_gmt_file <- paste("./gprofiler_full_hsapiens_",
+                            gprofiler_version_info$gprofiler_version,
+                            ".name.gmt", sep = "")
+
+# Static link to gmt file
+gprofiler_gmt_link <-
+  "https://biit.cs.ut.ee/gprofiler/static/gprofiler_full_hsapiens.name.gmt"
+
+# Download the gmt file if it has not already been downloaded
+if (!file.exists(gprofiler_gmt_file)) {
+  download.file(gprofiler_gmt_link, gprofiler_gmt_file)
+}
+
+# Load gene set definitions
+gprofiler_gene_sets <- GSA::GSA.read.gmt(gprofiler_gmt_file)
+names(gprofiler_gene_sets$genesets) <- gprofiler_gene_sets$geneset.names
+```
+
+The following function filters results from g:Profiler based on our previously set parameters for the minimum and maximum sizes of the genes sets under consideration and the minimum size of the intersection between the genes we are running over-representation analysis on and the gene sets returned.
+
+```{r}
+# Function for filtering g:Profiler results
+get_filtered_gprofiler_results <- function(gprofiler_results) {
+  return(subset(gprofiler_results, term_size >= min_gene_set_size
+                & term_size <= max_gene_set_size
+                & intersection_size >= min_intersection,
+                c(term_id, term_name, p_value, p_value)))
+}
+```
+
+We apply the function to each of our g:Profiler results.
+
+```{r}
+# Filtered results for upregulated genes
+results_upregulated <- get_filtered_gprofiler_results(
+  gprofiler_upregulated$result)
+
+# Filtered results for downregulated genes
+results_downregulated <- get_filtered_gprofiler_results(
+  gprofiler_downregulated$result)
+
+# Filtered results for all differentially expressed genes
+results_all <- get_filtered_gprofiler_results(gprofiler_all$result)
+```
+
+**3. How many gene sets were returned with what thresholds?** The thresholds used for finding gene sets were that the p-value must be less than 0.05, the number of genes in each gene set must be between 5 and 1,000 (inclusive), and there must be at least 5 genes in the over-representation analysis query that are present in each gene set returned. Below, we calculate the number of gene sets returned for each analysis.
+
+```{r}
+# Number of gene sets returned for upregulated genes
+nrow(results_upregulated)
+
+# Number of gene sets returned for downregulated genes
+nrow(results_downregulated)
+
+# Number of gene sets returned for all differentially expressed genes
+nrow(results_all)
+```
+
+There are 397 gene sets returned using only the upregulated genes, 684 gene sets returned using only the downregulated genes, and 682 gene sets returned using all differentially expressed genes (regardless of upregulation or downregulation).
+
+We can present the top 20 annotations of each thresholded over-representation analysis in table form using knitr [@knitr].
+
+```{r}
+# Table of results for upregulated genes
+knitr::kable(results_upregulated[1:20, c("term_id", "term_name", "p_value")],
+             type = "html", digits = 100, row.names = FALSE,
+             col.names = c("Term ID", "Term Name", "P-Value"),
+             caption = "**Table 2**: Top 20 terms for upregulated genes.")
+
+# Table of results for downregulated genes
+knitr::kable(results_downregulated[1:20, c("term_id", "term_name", "p_value")],
+             type = "html", digits = 100, row.names = FALSE,
+             col.names = c("Term ID", "Term Name", "P-Value"),
+             caption = "**Table 3**: Top 20 terms for downregulated genes.")
+
+# Table of results for all differentially expressed genes
+knitr::kable(results_all[1:20, c("term_id", "term_name", "p_value")],
+             type = "html", digits = 100, row.names = FALSE,
+             col.names = c("Term ID", "Term Name", "P-Value"),
+             caption = "**Table 4**: Top 20 terms for all differentially
+             expressed genes.")
+```
+
+**4. Run the analysis using the upregulated set of genes and the downregulated set of genes separately. How do these results compare to using the whole list (i.e., all differentially expressed genes together vs. the upregulated and downregulated differentially expressed genes separately)?** The top annotations for upregulated genes are mainly associated with translation of mRNA and the assembly of rRNA and proteins into ribosomes. Meanwhile, the top annotations for downregulated genes are associated with defensive responses to viruses and cytokines as well as regulation of these responses. There are no overlapping annotations between the top 20 for upregulated genes and the top 20 for downregulated genes. The top 18 annotations for all differentially expressed genes are all present in the the top annotations for upregulated genes, albeit in a slightly different ordering when order by p-value from least to greatest (as done in the tables above). The 19th annotation for all differentially expressed genes (post-translational protein modification) is not found in either of the top 20 annotations for upregulated or downregulated genes separately. The 20th annotation for all differentially expressed genes (defense response to virus) is also present in the top 20 annotations for downregulated genes.
+
+Finally, we will create generic enrichment map (GEM) files using the thresholded over-representation analysis results. We present a function to easily format g:Profiler results into a data frame that can be saved in the format of a GEM file.
+
+```{r}
+# Function for formatting GEM files from g:Profiler results
+create_GEM <- function(results, gene_sets, query) {
+  
+  # Add column for phenotype
+  results_GEM <- cbind(results, 1)
+  
+  # Add genes to gene sets
+  gene_sets_subset <- gene_sets$genesets[gene_sets$geneset.names
+                                         %in% results$term_id]
+  
+  # Find genes in the query that overlap with each gene sets
+  genes <- lapply(gene_sets_subset, function(x) {
+    intersect(x, downregulated_genes)
+  })
+  genes <- sapply(genes, function(x) {paste(x, collapse = ",")})
+  genes_df <- data.frame(term_id = names(genes), genes = genes)
+  
+  # Add genes to the results
+  results_GEM <- merge(results_GEM, genes_df, by.x = 1, by.y = 1)
+  
+  # Set the column names of the results
+  colnames(results_GEM) <- c("name", "description", "p-value", "q-value",
+                            "phenotype", "genes")
+  
+  # Return results in GEM format
+  return(results_GEM)
+}
+```
+
+Using the above function, we save the results of each of three analyses in GEM format.
+
+```{r}
+# Save results of upregulated genes in GEM format
+upregulated_GEM <- create_GEM(results_upregulated, gprofiler_gene_sets,
+                              upregulated_genes)
+write.table(upregulated_GEM, file = "gprofiler_upregulated.gem.txt",
+            quote = FALSE, sep = "\t", row.names = FALSE, col.names = FALSE)
+
+# Save results of downregulated genes in GEM format
+downregulated_GEM <- create_GEM(results_downregulated, gprofiler_gene_sets,
+                                downregulated_genes)
+write.table(downregulated_GEM, file = "gprofiler_downregulated.gem.txt",
+            quote = FALSE, sep = "\t", row.names = FALSE, col.names = FALSE)
+
+# Save results of all differentially genes in GEM format
+all_GEM <- create_GEM(results_all, gprofiler_gene_sets,
+                      c(upregulated_genes, downregulated_genes))
+write.table(all_GEM, file = "gprofiler_all.gem.txt", quote = FALSE, sep = "\t",
+            row.names = FALSE, col.names = FALSE)
+```
+
+# Interpretation
+
+**1. Do the over-representation results support conclusions or mechanisms discussed in the original paper?** The main conclusion of the original paper was that monocytes exposed to iSARS-CoV-2 produce significantly higher levels of cytokines and chemokines after exposure to LPS compared to the other groups of monocytes. This result is supported by our thresholded over-representation analysis on downregulated genes, for which we found that annotations related to cytokine responses in cells were among the top 20 found. Of course, due to the design of the study, it also makes sense that many of the annotations for downregulated genes are related to defense responses to external stimuli, including viruses, since monocytes in the Trn_S-LPS group were exposed to iSARS-CoV-2. However, the original paper does not discuss any results related to ribosome synthesis or translation and processing of mRNA. Annotations related to these two cellular processes were among the top 20 returned in over-representation analysis on upregulated genes [@cvetkovic2023].
+
+**2. Can you find evidence (i.e., publications) to support some of the results that you see? How does this evidence support your results?** A review by Jiao et al. (2023) explains how SARS-CoV-2 is able to regulate ribosome synthesis in infected cells. Ribosomes are important targets for viruses since they must use ribosomes from the host cell to synthesize viral proteins due to lacking organelles of their own. Wei and Hui (2022) explain that due to controlling host cell ribosomes, translation of the host cell's mRNA is inhibited. These publications provide support for the annotations we found for upregulated genes, which were related to translation and ribosome synthesis [@jiao2023; @wei2022].
+
+# References
