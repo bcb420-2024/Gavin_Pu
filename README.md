@@ -6,3 +6,5 @@ repo for bcb420 for Gavin Pu
 [Link to Assignment 1 HTML](https://github.com/bcb420-2024/Gavin_Pu/blob/main/A1_Gavin_Pu.nb.html)
 
 [Link to Assignment 2 HTML](https://github.com/bcb420-2024/Gavin_Pu/blob/main/A2_Gavin_Pu.nb.html)
+
+[Link to Assignment 3 HTML](https://github.com/bcb420-2024/Gavin_Pu/blob/main/A3_Gavin_Pu.nb.html)
